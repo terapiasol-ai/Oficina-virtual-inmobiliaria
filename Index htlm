@@ -277,3 +277,489 @@
         <p>&copy; 2026 AURION &bull; Oficina Virtual Profesional 24/7 &bull; Creadora Tecnológica: Sol Sánchez</p>
         <div class="contador-badge"><span>👁️ Visitas:</span><span class="contador-numero" id="contador-numero-visitas">142</span></div>
     </footer>
+
+<script>
+        const BACKEND_URL = "https://solsanchez-ai-inmobiliarialaura.onrender.com";
+        const LINK_CONTRATAR_SOL_IA = "https://t.me/Solsanchez_bot";
+        const paramsUrl = new URLSearchParams(window.location.search);
+        const brokerId = (paramsUrl.get("broker") || "laura").trim().toLowerCase();
+
+        let brokerNombre = "Laura Erazo";
+        let brokerRubro = "inmobiliaria";
+        let brokerVoz = "es-US-PalomaNeural";
+        let brokerCanal = "https://t.me/inmobiliarialaura_bot";
+        let salaActual = "comprador";
+        let vozActiva = true;
+        let recognition = null;
+        let grabando = false;
+        let datosCRM = [];
+        let passActualCRM = "";
+        let modoNuevaOficina = false;
+        let fotosPropComprimidas = [];
+        const audioRep = new Audio();
+
+        let sesionId = localStorage.getItem("inm_sid_" + brokerId);
+        if (!sesionId) {
+            sesionId = "web_" + brokerId + "_" + Date.now();
+            localStorage.setItem("inm_sid_" + brokerId, sesionId);
+        }
+
+        function sanitizar(t) { const d = document.createElement('div'); d.textContent = t || ""; return d.innerHTML; }
+
+        window.addEventListener("DOMContentLoaded", () => {
+            agregarBotonContratarLanding();
+            actualizarCamposCalif();
+            cargarInfoOficina();
+            cargarGaleriaProps();
+        });
+
+        function agregarBotonContratarLanding() {
+            const box = document.querySelector("#seccion-landing .hall-banner");
+            if (!box || document.getElementById("btnContratarSolIA")) return;
+            const d = document.createElement("div");
+            d.style.marginTop = "12px";
+            d.innerHTML = `<a id="btnContratarSolIA" href="${LINK_CONTRATAR_SOL_IA}" target="_blank" style="display:inline-block;background:#25D366;color:#FFF;padding:10px 20px;border-radius:25px;text-decoration:none;font-weight:700;font-size:0.86rem;">💼 ¿Eres Profesional? Contrata tu propia Oficina con Sol-AI</a>`;
+            box.appendChild(d);
+        }
+
+        async function cargarInfoOficina() {
+            const estEl = document.getElementById("estadoConexion");
+            try {
+                const ctrl = new AbortController();
+                const tOut = setTimeout(() => ctrl.abort(), 45000);
+                const res = await fetch(`${BACKEND_URL}/api/oficina/info?broker_id=${encodeURIComponent(brokerId)}`, { signal: ctrl.signal });
+                clearTimeout(tOut);
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const info = await res.json();
+
+                brokerNombre = info.asesor_principal || "Laura Erazo";
+                brokerRubro = info.rubro || "inmobiliaria";
+                brokerVoz = info.voz || "es-US-PalomaNeural";
+                brokerCanal = info.canal_oficial || "https://t.me/inmobiliarialaura_bot";
+
+                if (info.foto_perfil) document.getElementById("brokerLogo").src = info.foto_perfil;
+                document.getElementById("brokerNombreOficial").innerText = info.nombre_oficial || "Oficina Virtual";
+                document.title = (info.nombre_oficial || "Oficina Virtual") + " | 24/7";
+                const plant = info.plantilla || {};
+                document.getElementById("brokerBadge").innerText = (plant.nombre || "Oficina") + " • 24/7";
+                document.getElementById("brokerSubtitulo").innerText = plant.subtitulo || "";
+                document.getElementById("contador-numero-visitas").innerText = info.visitas || 142;
+
+                if (estEl) {
+                    estEl.innerHTML = `🟢 Secretaria IA En Línea &bull; Titular: <strong>${sanitizar(brokerNombre)}</strong> &bull; 100% Web sin descargas`;
+                    estEl.style.color = "#25D366";
+                }
+
+                document.getElementById("cfg_id").value = info.id || brokerId;
+                document.getElementById("cfg_rubro").value = brokerRubro;
+                document.getElementById("cfg_nombre_of").value = info.nombre_oficial || "";
+                document.getElementById("cfg_asesor").value = brokerNombre;
+                document.getElementById("cfg_voz").value = brokerVoz;
+                document.getElementById("cfg_foto").value = info.foto_perfil || "";
+                document.getElementById("cfg_reglas").value = info.reglas_extra || "";
+
+                pintarSalas(plant.salas || []);
+            } catch(e) {
+                if (estEl) {
+                    estEl.innerText = "🟡 Servidor despertando... espera unos segundos si recién abriste.";
+                    estEl.style.color = "#F7E7B4";
+                }
+            }
+        }
+
+        function pintarSalas(salas) {
+            const cont = document.getElementById("selectorSalas");
+            if (!cont || !salas.length) return;
+            cont.innerHTML = salas.map((s, idx) =>
+                `<button class="btn-sala ${idx === 0 ? 'active' : ''}" id="btn-${sanitizar(s.id)}" data-id="${sanitizar(s.id)}" data-ico="${sanitizar(s.ico)}" data-nom="${sanitizar(s.nom)}" data-msg="${sanitizar(s.msg)}" onclick="cambiarSalaBtn(this)"><span>${sanitizar(s.ico)}</span><span>${sanitizar(s.nom)}</span></button>`
+            ).join("") + `<button class="btn-sala" onclick="mostrarSeccion('agenda')"><span>📋</span><span>Calificar / Cita</span></button>`;
+
+            const primera = salas[0];
+            salaActual = primera.id;
+            document.getElementById("salaEmoji").innerText = primera.ico;
+            document.getElementById("salaNombre").innerText = primera.nom;
+            document.getElementById("msgBienvenida").innerHTML = `¡Hola! Soy la <strong>Secretaria Ejecutiva Virtual</strong> de ${sanitizar(brokerNombre)}.<br><br>${sanitizar(primera.msg)}`;
+        }
+
+        function mostrarSeccion(secId) {
+            document.querySelectorAll(".seccion-box").forEach(s => s.classList.remove("activa"));
+            document.querySelectorAll(".btn-nav-main").forEach(b => b.classList.remove("active"));
+            const target = document.getElementById("seccion-" + secId);
+            if (target) target.classList.add("activa");
+            if (secId === 'oficina') document.getElementById("btnTabOficina").classList.add("active");
+            if (secId === 'props') { document.getElementById("btnTabProps").classList.add("active"); cargarGaleriaProps(); }
+            if (secId === 'agenda') document.getElementById("btnTabAgenda").classList.add("active");
+            if (secId === 'crm') document.getElementById("btnTabCrm").classList.add("active");
+            if (secId === 'landing') document.getElementById("btnTabLanding").classList.add("active");
+            window.scrollTo({ top: 70, behavior: 'smooth' });
+        }
+
+        function cambiarSalaBtn(btn) {
+            salaActual = btn.dataset.id;
+            document.querySelectorAll(".btn-sala").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            document.getElementById("salaEmoji").innerText = btn.dataset.ico;
+            document.getElementById("salaNombre").innerText = btn.dataset.nom;
+            document.getElementById("msgBienvenida").innerHTML = sanitizar(btn.dataset.msg);
+            hablarTTS(btn.dataset.msg);
+        }
+
+        function toggleAudio() {
+            vozActiva = !vozActiva;
+            document.getElementById("btnAudio").innerText = vozActiva ? "🔊 Voz Activa" : "🔇 Voz Silenciada";
+            if (!vozActiva) {
+                try { audioRep.pause(); } catch(e) {}
+                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+            }
+        }
+
+        function hablarTTS(texto) {
+            if (!vozActiva || !('speechSynthesis' in window)) return;
+            window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance((texto || "").replace(/[*#_~`$]/g, " "));
+            const voces = window.speechSynthesis.getVoices();
+            const vozN = voces.find(v => (v.lang === "es-419" || v.lang === "es-US") && /Natural|Paloma|Google/i.test(v.name)) || voces.find(v => v.lang.startsWith("es") && !v.lang.includes("ES")) || voces.find(v => v.lang.startsWith("es"));
+            if (vozN && salaActual !== 'extranjeros') utter.voice = vozN;
+            utter.lang = (salaActual === 'extranjeros') ? 'en-US' : 'es-419';
+            utter.rate = 0.90;
+            window.speechSynthesis.speak(utter);
+        }
+
+        function reproducirBase64(b64, fallbackTxt) {
+            if (!vozActiva) return;
+            if (!b64) { hablarTTS(fallbackTxt); return; }
+            try {
+                audioRep.pause();
+                audioRep.src = "data:audio/mpeg;base64," + b64;
+                const p = audioRep.play();
+                if (p && typeof p.catch === "function") p.catch(() => hablarTTS(fallbackTxt));
+            } catch(e) { hablarTTS(fallbackTxt); }
+        }
+
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRec) {
+            recognition = new SpeechRec();
+            recognition.onstart = () => { grabando = true; const b = document.getElementById("btnMic"); b.classList.add("recording"); b.innerText = "🔴 Escuchando..."; };
+            recognition.onresult = (e) => {
+                if (e.results && e.results[0]) { document.getElementById("inputChat").value = e.results[0][0].transcript; enviarMensaje(); }
+            };
+            recognition.onerror = (e) => {
+                resetMic();
+                if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+                    document.getElementById("chatArea").innerHTML += `<div class="msg-sec">🎙️ Activa el permiso de micrófono en Chrome para hablar.</div>`;
+                }
+            };
+            recognition.onend = () => resetMic();
+        }
+
+        function toggleMic() {
+            if (!recognition) { alert("Micrófono no disponible aquí. Ábrelo en Google Chrome."); return; }
+            if (grabando) { recognition.stop(); return; }
+            try { audioRep.pause(); } catch(e) {}
+            document.getElementById("inputChat").value = "";
+            recognition.lang = (salaActual === 'extranjeros') ? 'en-US' : 'es-419';
+            try { recognition.start(); } catch(e) { resetMic(); }
+        }
+        function resetMic() { grabando = false; const b = document.getElementById("btnMic"); if (b) { b.classList.remove("recording"); b.innerText = "🎙️ Hablar"; } }
+
+        async function enviarMensaje() {
+            const inp = document.getElementById("inputChat");
+            const txt = inp.value.trim();
+            if (!txt) return;
+            const chat = document.getElementById("chatArea");
+            chat.innerHTML += `<div class="msg-cli">${sanitizar(txt)}</div>`;
+            inp.value = "";
+            chat.scrollTop = chat.scrollHeight;
+
+            const load = document.createElement("div");
+            load.className = "msg-sec";
+            load.innerText = "✨ Analizando tu consulta...";
+            chat.appendChild(load);
+            chat.scrollTop = chat.scrollHeight;
+
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/chat`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ broker_id: brokerId, sala: salaActual, mensaje: txt, sesion_id: sesionId, generar_audio: vozActiva })
+                });
+                load.remove();
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const d = await res.json();
+                const textoResp = sanitizar(d.respuesta || "").split(String.fromCharCode(10)).join("<br>");
+                const nomVoz = brokerVoz.includes("Alonso") ? "AlonsoNeural" : "PalomaNeural";
+                const tag = d.modelo ? `<div class="ia-tag">✨ IA (${sanitizar(d.modelo)}) • 🔊 ${nomVoz}</div><br>` : "";
+                chat.innerHTML += `<div class="msg-sec">${tag}${textoResp}</div>`;
+                chat.scrollTop = chat.scrollHeight;
+                reproducirBase64(d.audio_base64, d.respuesta);
+            } catch (e) {
+                load.remove();
+                chat.innerHTML += `<div class="msg-sec">⚠️ No pude conectar con el servidor (${sanitizar(e.message)}). Si estaba en reposo, espera unos segundos y vuelve a intentar.</div>`;
+            }
+        }async function cargarGaleriaProps() {
+            const cont = document.getElementById("galeriaProps");
+            if (!cont) return;
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/propiedades/listar?broker_id=${encodeURIComponent(brokerId)}`);
+                const d = await res.json();
+                const props = d.propiedades || [];
+                if (!props.length) {
+                    cont.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:#94A3B8;padding:24px;">Aún no hay propiedades publicadas en la galería. El profesional puede subirlas desde su Panel Privado.</div>`;
+                    return;
+                }
+                cont.innerHTML = props.map(p => {
+                    const imgsHtml = (p.fotos && p.fotos.length)
+                        ? `<div class="prop-imgs">${p.fotos.map(f => `<img src="${sanitizar(f)}" alt="Propiedad">`).join("")}</div>`
+                        : `<div style="height:120px;background:#090E16;display:flex;align-items:center;justify-content:center;color:#64748B;">🏘️ Sin foto</div>`;
+                    return `<div class="prop-card">${imgsHtml}<div class="prop-body"><div><span class="prop-badge">${sanitizar(p.operacion)}</span><h3 style="color:var(--gold-light);font-size:1.05rem;margin-top:6px;">${sanitizar(p.titulo)}</h3><div style="color:#25D366;font-weight:800;font-size:1rem;">${sanitizar(p.precio)}</div><div style="color:#94A3B8;font-size:0.8rem;">📍 ${sanitizar(p.comuna || 'Consultar ubicación')}</div><p style="font-size:0.82rem;color:#CBD5E1;margin-top:6px;">${sanitizar(p.descripcion || '')}</p></div><button onclick="calificarPropiedad('${sanitizar(p.titulo)}','${sanitizar(p.operacion)}','${sanitizar(p.valor_numerico || '')}')" class="btn-submit" style="width:100%;padding:9px;font-size:0.84rem;margin-top:10px;">📋 Calificarme por esta Propiedad</button></div></div>`;
+                }).join("");
+                pintarListaPropsAdmin(props);
+            } catch(e) {
+                cont.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:#94A3B8;padding:20px;">Cargando propiedades desde el servidor...</div>`;
+            }
+        }
+
+        function calificarPropiedad(titulo, operacion, valorNum) {
+            document.getElementById("ag_propiedad").value = `${titulo} (${operacion})`;
+            document.getElementById("ag_servicio").value = operacion.toLowerCase().includes("arriend") ? "Arriendo / Postulación" : "Comprar Propiedad";
+            actualizarCamposCalif();
+            if (valorNum && document.getElementById("ag_canon")) document.getElementById("ag_canon").value = valorNum;
+            mostrarSeccion("agenda");
+        }
+
+        function actualizarCamposCalif() {
+            const s = (document.getElementById("ag_servicio").value || "").toLowerCase();
+            document.getElementById("bloque_arriendo").style.display = s.includes("arrend") && !s.includes("poner") ? "block" : "none";
+            document.getElementById("bloque_compra").style.display = s.includes("compr") ? "block" : "none";
+            document.getElementById("bloque_general").style.display = (!s.includes("compr") && !(s.includes("arrend") && !s.includes("poner"))) ? "block" : "none";
+        }
+
+        async function procesarAgenda(e) {
+            e.preventDefault();
+            if (!document.getElementById("ag_privacidad").checked) {
+                alert("Debes aceptar la casilla de Protección de Datos Personales.");
+                return;
+            }
+            const payload = {
+                broker_id: brokerId,
+                nombre: document.getElementById("ag_nombre").value,
+                rut: document.getElementById("ag_rut").value,
+                telefono: document.getElementById("ag_telefono").value,
+                email: document.getElementById("ag_email").value,
+                propiedad_interes: document.getElementById("ag_propiedad").value,
+                tipo_servicio: document.getElementById("ag_servicio").value,
+                fecha_preferida: document.getElementById("ag_fecha").value,
+                hora_preferida: document.getElementById("ag_hora").value,
+                renta_liquida: document.getElementById("ag_renta").value,
+                canon_objetivo: document.getElementById("ag_canon").value,
+                afp_ok: document.getElementById("ag_afp").value,
+                dicom_ok: document.getElementById("ag_dicom").value,
+                aval_ok: document.getElementById("ag_aval").value,
+                forma_pago: document.getElementById("ag_pago").value,
+                presupuesto: document.getElementById("ag_presup_c").value || document.getElementById("ag_presup_g").value,
+                urgencia: document.getElementById("ag_urgencia").value,
+                detalles: document.getElementById("ag_detalles").value,
+                consentimiento_privacidad: true
+            };
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/agenda/calificar`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                const d = await res.json();
+                if (!res.ok) throw new Error(d.error || "Error");
+                const c = d.cita || {};
+                let vipHtml = "";
+                if (d.requiere_cedula_vip) {
+                    const canal = d.canal_confidencial || brokerCanal;
+                    vipHtml = `<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #D4AF37;">
+                        <p style="font-size:0.84rem;color:#F7E7B4;margin-bottom:8px;">🪪 <strong>Paso Confidencial VIP:</strong> Para validar tu identidad y resguardar tus datos personales, envía la foto de tu <strong>Cédula de Identidad por ambos lados</strong> y respaldos directo al canal confidencial:</p>
+                        <a href="${sanitizar(canal)}" target="_blank" style="display:inline-block;background:#229ED9;color:#FFF;padding:9px 16px;border-radius:20px;text-decoration:none;font-weight:700;font-size:0.84rem;">📲 Enviar Cédula por Telegram Confidencial</a>
+                    </div>`;
+                }
+                document.getElementById("resultadoCalif").innerHTML = `<div style="background:#141E2C;border:2px solid #D4AF37;border-radius:12px;padding:14px;"><strong>${sanitizar(c.calificacion || "Registrado")}</strong><br><small style="color:#CBD5E1;">${sanitizar(c.detalle_calif || "")}</small>${vipHtml}</div>`;
+                e.target.reset();
+                actualizarCamposCalif();
+            } catch(err) {
+                alert("Error al enviar (" + err.message + ").");
+            }
+        }
+
+        async function cargarCRM() {
+            const pass = document.getElementById("crm_pass").value.trim();
+            if (!pass) { alert("Ingresa tu contraseña."); return; }
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/agenda/listar?broker_id=${encodeURIComponent(brokerId)}&password=${encodeURIComponent(pass)}`);
+                const d = await res.json();
+                if (d.error) { alert(d.error); return; }
+                passActualCRM = pass;
+                modoNuevaOficina = false;
+                datosCRM = d.agenda || [];
+                document.getElementById("crmTotal").innerText = `${datosCRM.length} Prospectos (VIP primero)`;
+                const tbody = document.getElementById("crmBody");
+                tbody.innerHTML = datosCRM.map(c =>
+                    `<tr><td><strong>${sanitizar(c.calificacion || '🟡 EN REVISIÓN')}</strong><br><small style="color:#94A3B8;">${sanitizar(c.fecha_registro || '')}</small></td><td><strong>${sanitizar(c.nombre)}</strong><br><small>${sanitizar(c.rut || '')}</small></td><td>${sanitizar(c.telefono)}</td><td>${sanitizar(c.tipo_servicio)}<br><small style="color:#F6E7B0;">${sanitizar(c.propiedad_interes || '')}</small></td><td>${sanitizar(c.fecha_preferida)}<br><small>${sanitizar(c.hora_preferida)}</small></td><td>${sanitizar(c.detalle_calif || '')}<br><small style="color:#94A3B8;">${sanitizar(c.detalles || '')}</small></td></tr>`
+                ).join("");
+                document.getElementById("crm-login").style.display = "none";
+                document.getElementById("crm-view").style.display = "block";
+                cargarGaleriaProps();
+            } catch(e) { alert("Error al acceder al panel."); }
+        }
+
+        function togglePanelProps() {
+            const p = document.getElementById("panelPropsOficina");
+            p.style.display = p.style.display === "none" ? "block" : "none";
+        }
+        function toggleConfigOficina() {
+            const p = document.getElementById("panelConfigOficina");
+            p.style.display = p.style.display === "none" ? "block" : "none";
+        }
+
+        function procesarFotosProp(input) {
+            fotosPropComprimidas = [];
+            const prev = document.getElementById("previewFotosProp");
+            prev.innerHTML = "";
+            const files = Array.from(input.files || []).slice(0, 4);
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement("canvas");
+                        const maxW = 720;
+                        const scale = img.width > maxW ? (maxW / img.width) : 1;
+                        canvas.width = img.width * scale;
+                        canvas.height = img.height * scale;
+                        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+                        const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+                        fotosPropComprimidas.push(dataUrl);
+                        prev.innerHTML += `<img src="${dataUrl}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid #D4AF37;">`;
+                    };
+                    img.src = ev.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function guardarPropiedad() {
+            const urlsExtra = (document.getElementById("prop_fotos_urls").value || "").split(",").map(x => x.trim()).filter(Boolean);
+            const todasFotos = fotosPropComprimidas.concat(urlsExtra).slice(0, 4);
+            const payload = {
+                broker_id: brokerId,
+                password: passActualCRM,
+                titulo: document.getElementById("prop_titulo").value.trim(),
+                operacion: document.getElementById("prop_operacion").value,
+                precio: document.getElementById("prop_precio").value.trim(),
+                valor_numerico: document.getElementById("prop_valor_num").value.trim(),
+                comuna: document.getElementById("prop_comuna").value.trim(),
+                descripcion: document.getElementById("prop_desc").value.trim(),
+                fotos: todasFotos
+            };
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/propiedades/guardar`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                const d = await res.json();
+                if (!res.ok || d.error) { alert(d.error || "Error al guardar"); return; }
+                alert("Propiedad publicada en tu Galería.");
+                fotosPropComprimidas = [];
+                document.getElementById("previewFotosProp").innerHTML = "";
+                document.getElementById("prop_titulo").value = "";
+                document.getElementById("prop_precio").value = "";
+                document.getElementById("prop_valor_num").value = "";
+                document.getElementById("prop_comuna").value = "";
+                document.getElementById("prop_fotos_urls").value = "";
+                document.getElementById("prop_desc").value = "";
+                cargarGaleriaProps();
+            } catch(e) { alert("Error de conexión al publicar propiedad."); }
+        }
+
+        function pintarListaPropsAdmin(props) {
+            const c = document.getElementById("listaPropsAdmin");
+            if (!c) return;
+            c.innerHTML = props.map(p => `<div style="display:flex;justify-content:space-between;align-items:center;background:#070A0F;padding:6px 10px;border-radius:6px;margin-top:4px;font-size:0.8rem;"><span>${sanitizar(p.titulo)} (${sanitizar(p.precio)})</span><button onclick="eliminarPropiedad('${p.id}')" style="background:#7F1D1D;color:#FFF;border:none;padding:3px 8px;border-radius:4px;cursor:pointer;">Eliminar</button></div>`).join("");
+        }
+
+        async function eliminarPropiedad(id) {
+            try {
+                await fetch(`${BACKEND_URL}/api/propiedades/eliminar`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ broker_id: brokerId, password: passActualCRM, prop_id: String(id) })
+                });
+                cargarGaleriaProps();
+            } catch(e) {}
+        }
+
+        function abrirNuevaOficina() {
+            modoNuevaOficina = true;
+            passActualCRM = "";
+            document.getElementById("crm-login").style.display = "none";
+            document.getElementById("crm-view").style.display = "block";
+            document.getElementById("panelConfigOficina").style.display = "block";
+            document.getElementById("cfg_id").value = "";
+            document.getElementById("cfg_id").placeholder = "ej: dr_perez o estudio_garcia";
+            document.getElementById("cfg_nombre_of").value = "";
+            document.getElementById("cfg_asesor").value = "";
+            document.getElementById("cfg_pass_new").placeholder = "Crea tu contraseña nueva *";
+        }
+
+        async function guardarConfigOficina() {
+            const payload = {
+                nuevo_id: document.getElementById("cfg_id").value.trim().toLowerCase(),
+                es_nueva: modoNuevaOficina,
+                password_actual: passActualCRM,
+                password_nueva: document.getElementById("cfg_pass_new").value.trim(),
+                rubro: document.getElementById("cfg_rubro").value,
+                nombre_oficial: document.getElementById("cfg_nombre_of").value.trim(),
+                asesor_principal: document.getElementById("cfg_asesor").value.trim(),
+                telegram_id: document.getElementById("cfg_tg_id").value.trim(),
+                voz: document.getElementById("cfg_voz").value,
+                foto_perfil: document.getElementById("cfg_foto").value.trim(),
+                reglas_extra: document.getElementById("cfg_reglas").value.trim()
+            };
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/oficina/guardar`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                const d = await res.json();
+                if (!res.ok || d.error) { alert(d.error || "No se pudo guardar"); return; }
+                const base = window.location.origin + window.location.pathname;
+                const link = `${base}?broker=${encodeURIComponent(d.id)}`;
+                document.getElementById("linkGeneradoBox").innerHTML = `✅ Guardado. Tu enlace propio es: <a href="${link}" style="color:#38BDF8;font-weight:bold;">${link}</a>`;
+            } catch(e) { alert("Error al guardar configuración."); }
+        }
+
+        function exportarCSV() {
+            if (!datosCRM.length) { alert("No hay datos para exportar."); return; }
+            const nl = String.fromCharCode(10);
+            let csv = "Calificacion,Fecha Registro,Cliente,RUT,Contacto,Servicio,Propiedad,Fecha Cita,Horario,Detalle" + nl;
+            datosCRM.forEach(c => {
+                csv += `"${c.calificacion || ''}","${c.fecha_registro || ''}","${c.nombre || ''}","${c.rut || ''}","${c.telefono || ''}","${c.tipo_servicio || ''}","${c.propiedad_interes || ''}","${c.fecha_preferida || ''}","${c.hora_preferida || ''}","${(c.detalle_calif || '') + ' ' + (c.detalles || '').replace(/"/g, "'")}"` + nl;
+            });
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = `Agenda_${brokerId}.csv`;
+            link.click();
+        }
+
+        function abrirFichaComprador() {
+            const w = window.open('', '_blank');
+            w.document.write(`<!DOCTYPE html><html><head><title>Ficha de Calificación</title><style>body{font-family:Arial,sans-serif;padding:30px;color:#222;}h2{color:#997A15;border-bottom:2px solid #997A15;padding-bottom:8px;}table{width:100%;border-collapse:collapse;margin-top:15px;}td,th{border:1px solid #ccc;padding:10px;text-align:left;}th{background:#f9f9f9;}.btn{background:#D4AF37;padding:10px 20px;border:none;font-weight:bold;cursor:pointer;margin-bottom:15px;}@media print{.btn{display:none;}}</style></head><body><button class="btn" onclick="window.print()">🖨️ Imprimir</button><h2>📋 FICHA DE CALIFICACIÓN</h2><p><strong>Profesional:</strong> ${sanitizar(brokerNombre)}</p><table><tr><th>Nombre Cliente</th><td></td><th>RUT</th><td></td></tr><tr><th>Presupuesto / Renta</th><td></td><th>Respaldo</th><td></td></tr><tr><th>Comuna / Detalle</th><td></td><th>Estado</th><td>[ ] VIP [ ] Revisión</td></tr></table></body></html>`);
+            w.document.close();
+        }
+
+        function abrirChecklistCBR() {
+            const w = window.open('', '_blank');
+            w.document.write(`<!DOCTYPE html><html><head><title>Checklist Auditoría Legal CBR</title><style>body{font-family:Arial,sans-serif;padding:30px;color:#222;}h2{color:#997A15;border-bottom:2px solid #997A15;padding-bottom:8px;}ul{line-height:2;}.btn{background:#D4AF37;padding:10px 20px;border:none;font-weight:bold;cursor:pointer;margin-bottom:15px;}@media print{.btn{display:none;}}</style></head><body><button class="btn" onclick="window.print()">🖨️ Imprimir</button><h2>🛡️ CHECKLIST AUDITORÍA LEGAL CBR & TGR</h2><p><strong>Profesional:</strong> ${sanitizar(brokerNombre)}</p><ul><li>[ ] Copia de Dominio Vigente (CBR).</li><li>[ ] Certificado HGP (Hipotecas, Gravámenes y Prohibiciones).</li><li>[ ] Certificado de Deuda de Contribuciones (TGR).</li><li>[ ] Certificado de Número y No Expropiación.</li><li>[ ] Verificación de personería y poderes vigentes.</li></ul></body></html>`);
+            w.document.close();
+        }
+    </script>
+</body>
+</html>
